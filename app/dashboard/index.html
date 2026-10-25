@@ -1,125 +1,17 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>QuantPilot — Glass-Box Desk</title>
-  <link rel="stylesheet" href="/static/style.css">
-</head>
-<body>
-  <header>
-    <div class="logo">
-      <h1>QuantPilot <span>Glass-Box Desk</span></h1>
-      <span class="badge" id="env-badge">DELTA TESTNET</span>
-    </div>
-    <div class="header-controls">
-      <div class="status-indicator">
-        <span class="dot" id="engine-dot"></span>
-        <span id="engine-state-text">CONNECTING</span>
-      </div>
-      <button id="kill-btn" class="btn btn-danger">KILL SWITCH</button>
-    </div>
-  </header>
-
-  <main class="grid-container">
-    <!-- Top Metrics Row -->
-    <section class="card metric-card">
-      <h3>Active Instrument</h3>
-      <div class="metric-val" id="symbol-val">BTCUSD</div>
-      <div class="metric-sub" id="profile-sub">Profile: default</div>
-    </section>
-
-    <section class="card metric-card">
-      <h3>Market Regime</h3>
-      <div class="metric-val" id="regime-val">--</div>
-      <div class="metric-sub" id="regime-sub">Confidence: --</div>
-    </section>
-
-    <section class="card metric-card">
-      <h3>Active Allocator</h3>
-      <div class="metric-val" id="allocator-val">--</div>
-      <div class="metric-sub" id="allocator-sub">Weight: --</div>
-    </section>
-
-    <section class="card metric-card">
-      <h3>System Health</h3>
-      <div class="metric-val text-success" id="health-val">HEALTHY</div>
-      <div class="metric-sub" id="drift-sub">Clock Drift: 0.05s</div>
-    </section>
-
-    <!-- Positions & Exchange Reconciled Truth -->
-    <section class="card col-span-2">
-      <div class="card-header">
-        <h2>Exchange-Reconciled Positions</h2>
-        <span class="tag">Source: Exchange REST Truth</span>
-      </div>
-      <div id="positions-container">
-        <p class="placeholder-text">No active positions open on Delta Testnet.</p>
-      </div>
-    </section>
-
-    <!-- Shadow Accounts (Hypothetical) -->
-    <section class="card col-span-2">
-      <div class="card-header">
-        <h2>Virtual Shadow Accounts</h2>
-        <span class="tag tag-warning">HYPOTHETICAL — MODELLED FRICTION</span>
-      </div>
-      <div class="table-responsive">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>Strategy</th>
-              <th>Trades</th>
-              <th>Win Rate</th>
-              <th>Net PnL</th>
-              <th>Max Drawdown</th>
-            </tr>
-          </thead>
-          <tbody id="shadow-table-body">
-            <tr>
-              <td>trend_following</td>
-              <td>0</td>
-              <td>0.0%</td>
-              <td>$0.00</td>
-              <td>0.0%</td>
-            </tr>
-            <tr>
-              <td>mean_reversion</td>
-              <td>0</td>
-              <td>0.0%</td>
-              <td>$0.00</td>
-              <td>0.0%</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
-
-    <!-- Decision Journal Feed -->
-    <section class="card col-span-4">
-      <div class="card-header">
-        <h2>Decision Journal (Explainable Audit Log)</h2>
-        <span class="tag">Recorded per Closed Candle</span>
-      </div>
-      <div id="journal-feed" class="journal-feed">
-        <p class="placeholder-text">Listening for candle-close decisions...</p>
-      </div>
-    </section>
-  </main>
-
-  <!-- Kill Switch Modal -->
-  <div id="kill-modal" class="modal hidden">
-    <div class="modal-content">
-      <h2>⚠️ Confirm Emergency Kill Switch</h2>
-      <p>This action will immediately cancel all pending orders and close any open positions with reduce-only orders.</p>
-      <input type="password" id="secret-input" placeholder="Enter X-Control-Secret">
-      <div class="modal-actions">
-        <button id="cancel-kill" class="btn btn-secondary">Cancel</button>
-        <button id="confirm-kill" class="btn btn-danger">HALT TRADING NOW</button>
-      </div>
-    </div>
-  </div>
-
-  <script src="/static/app.js"></script>
-</body>
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2310b981' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M3 3v18h18'/><path d='m19 9-5 5-4-4-3 3'/></svg>" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>QuantPilot — Glass-Box Desk</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <script type="module" crossorigin src="./assets/index-C5H2KvnL.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-C1aSmU5J.css">
+  </head>
+  <body class="bg-background text-foreground antialiased selection:bg-emerald-500/20 selection:text-emerald-300">
+    <div id="root"></div>
+  </body>
 </html>

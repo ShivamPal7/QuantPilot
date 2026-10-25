@@ -44,6 +44,26 @@ class TestFakeExchangeIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(positions[0].contracts, 5)
         self.assertTrue(positions[0].has_active_bracket)
 
+    async def test_unbracketed_position_flip_clears_stale_brackets(self) -> None:
+        ex = FakeExchange()
+        # Open Long 2 with SL=64000
+        await ex.place_order(
+            "BTCUSD", 2, "buy", price=Decimal("65000.0"),
+            bracket_stop_loss_price=Decimal("64000.0"),
+            bracket_take_profit_price=Decimal("66000.0"),
+        )
+        # Flip position to Short 3 without brackets
+        await ex.place_order("BTCUSD", 5, "sell", price=Decimal("65000.0"))
+
+        pos = (await ex.get_positions("BTCUSD"))[0]
+        self.assertEqual(pos.side, "short")
+        self.assertEqual(pos.contracts, 3)
+        self.assertFalse(pos.has_active_bracket)
+
+        # Trigger market price check at 65000 - should not trigger stale long SL
+        events = await ex.set_market_price(Decimal("65000.0"))
+        self.assertEqual(len(events), 0, "Stale bracket was falsely triggered on flipped position")
+
 
 if __name__ == "__main__":
     unittest.main()

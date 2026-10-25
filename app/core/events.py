@@ -40,6 +40,7 @@ class CandleClosedEvent(BaseEngineEvent):
     timeframe: str = "1h"
     close_time: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     close_price: float = 0.0
+    candle: Any = None
 
 
 @dataclass(frozen=True)

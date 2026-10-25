@@ -59,3 +59,29 @@ def check_protective_stop(intent: OrderIntent) -> RuleEvaluationResult:
         threshold_value=0.0,
         message="Intent lacks a valid non-zero protective stop" if not passed else "Protective stop present",
     )
+
+
+def check_drawdown(
+    current_equity: Decimal,
+    peak_equity: Decimal,
+    halt_threshold_pct: float = 0.06,
+) -> RuleEvaluationResult:
+    """Rule 5: Cumulative drawdown must not breach the halt threshold."""
+    if peak_equity <= Decimal("0"):
+        drawdown_pct = 0.0
+    else:
+        drawdown_pct = float(max(Decimal("0"), (peak_equity - current_equity) / peak_equity))
+
+    passed = drawdown_pct < halt_threshold_pct
+    return RuleEvaluationResult(
+        rule_name="DRAWDOWN_LADDER",
+        passed=passed,
+        observed_value=round(drawdown_pct * 100.0, 2),
+        threshold_value=round(halt_threshold_pct * 100.0, 2),
+        message=(
+            f"Drawdown ({drawdown_pct * 100.0:.1f}%) breached halt threshold ({halt_threshold_pct * 100.0:.1f}%)"
+            if not passed
+            else "Drawdown within safe limits"
+        ),
+    )
+

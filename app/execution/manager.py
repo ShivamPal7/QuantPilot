@@ -54,20 +54,20 @@ class ExecutionManager:
         # Marketable limit bounded by touch
         limit_price = snapshot.best_ask if intent.direction == Direction.LONG else snapshot.best_bid
 
-        # Calculate bracket prices
+        # Calculate bracket prices using BracketManager
         bracket_sl = None
-        if intent.proposed_stop_distance > Decimal("0"):
-            if intent.direction == Direction.LONG:
-                bracket_sl = limit_price - intent.proposed_stop_distance
-            else:
-                bracket_sl = limit_price + intent.proposed_stop_distance
-
         bracket_tp = None
-        if intent.proposed_tp_distance and intent.proposed_tp_distance > Decimal("0"):
-            if intent.direction == Direction.LONG:
-                bracket_tp = limit_price + intent.proposed_tp_distance
-            else:
-                bracket_tp = limit_price - intent.proposed_tp_distance
+        if intent.proposed_stop_distance > Decimal("0"):
+            from app.execution.bracket import BracketManager
+            brackets = BracketManager.compute_brackets(
+                entry_price=limit_price,
+                direction=intent.direction,
+                stop_distance=intent.proposed_stop_distance,
+                tp_distance=intent.proposed_tp_distance,
+                tick_size=Decimal("0.5"),
+            )
+            bracket_sl = brackets.stop_loss_price
+            bracket_tp = brackets.take_profit_price
 
         logger.info(
             "Placing %s order for %d contracts of %s (Price: %s, SL: %s, TP: %s, ClOrdID: %s)",
@@ -107,6 +107,58 @@ class ExecutionManager:
             self._orders[client_order_id] = record
             return record
 
+        except TimeoutError as exc:
+            logger.warning(
+                "Timeout placing order %s: %s. Querying exchange by client_order_id to resolve in-flight state...",
+                client_order_id,
+                exc,
+            )
+            resolved = await self.resolve_in_flight_order(
+                client_order_id=client_order_id,
+                parent_decision_id=intent.decision_id,
+                symbol=intent.symbol,
+                side=side,
+                size_contracts=verdict.approved_contracts,
+                price=limit_price,
+            )
+            return resolved
+
         except Exception as exc:
             logger.error("Failed to place order: %s", exc)
+            return None
+
+    async def resolve_in_flight_order(
+        self,
+        client_order_id: str,
+        parent_decision_id: str = "in_flight_resolution",
+        symbol: str = "",
+        side: str = "",
+        size_contracts: int = 0,
+        price: Decimal = Decimal("0"),
+    ) -> OrderRecord | None:
+        """Query exchange by client_order_id to determine order state following a timeout or network drop."""
+        try:
+            existing = await self.exchange.get_order_by_client_id(client_order_id)
+            if existing is not None:
+                order_state = OrderState.FILLED if existing.get("state") == "filled" else OrderState.SUBMITTED
+                record = OrderRecord(
+                    internal_id=str(uuid.uuid4()),
+                    client_order_id=client_order_id,
+                    parent_decision_id=parent_decision_id,
+                    symbol=existing.get("product_symbol", symbol),
+                    role=OrderRole.ENTRY,
+                    state=order_state,
+                    side=existing.get("side", side),
+                    size_contracts=int(existing.get("size", size_contracts)),
+                    price=Decimal(str(existing.get("price", price))),
+                    exchange_order_id=str(existing.get("id")) if existing.get("id") else None,
+                )
+                self._orders[client_order_id] = record
+                logger.info("Successfully resolved in-flight order %s: state=%s", client_order_id, order_state)
+                return record
+            else:
+                logger.info("In-flight order %s not found on exchange.", client_order_id)
+                return None
+        except Exception as exc:
+            logger.error("Failed to resolve in-flight order %s: %s", client_order_id, exc)
             return None

@@ -3,13 +3,39 @@
 Per Section 9.8 of agent.md:
 Exposes read-only views (health, status, positions, decisions, strategies, config)
 and guarded state-changing endpoints (start, pause, resume, kill, reset, chaos).
+All endpoints connect to the live TradingEngine.
 """
 
 from __future__ import annotations
 
 import sqlite3
 from typing import Any
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+
+try:
+    from fastapi import APIRouter, Depends, HTTPException, Query, status
+except ImportError:
+    class APIRouter:  # type: ignore[no-redef]
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        def get(self, *args: Any, **kwargs: Any) -> Any:
+            def decorator(f: Any) -> Any:
+                return f
+            return decorator
+
+        def post(self, *args: Any, **kwargs: Any) -> Any:
+            def decorator(f: Any) -> Any:
+                return f
+            return decorator
+
+    def Depends(dependency: Any = None) -> Any:  # type: ignore[no-redef]
+        return dependency
+
+    def Query(default: Any = ..., **kwargs: Any) -> Any:  # type: ignore[no-redef]
+        return default
+
+    from app.api.deps import HTTPException, status  # type: ignore[assignment]
+
 
 from app.api.deps import verify_control_secret
 from app.api.schemas import (
@@ -20,6 +46,7 @@ from app.api.schemas import (
     StatusResponse,
 )
 from app.core.config import get_settings, load_engine_config
+from app.core.engine import get_trading_engine
 from app.core.state import EngineState
 
 router = APIRouter(prefix="/api", tags=["Control Plane"])
@@ -27,74 +54,46 @@ router = APIRouter(prefix="/api", tags=["Control Plane"])
 
 @router.get("/health", response_model=HealthResponse)
 async def get_health() -> HealthResponse:
-    """Read-only system health indicators."""
-    settings = get_settings()
-    # Check db
-    db_ok = True
-    try:
-        conn = sqlite3.connect(settings.DATABASE_PATH)
-        conn.execute("SELECT 1;")
-        conn.close()
-    except Exception:
-        db_ok = False
-
+    """Read-only system health indicators from live trading engine."""
+    engine = get_trading_engine()
+    health_data = engine.get_health()
     return HealthResponse(
-        status="healthy" if db_ok else "degraded",
-        target_env=settings.TARGET_ENV,
-        engine_state=EngineState.RUNNING.value,
-        clock_drift_seconds=0.05,
-        data_fresh=True,
-        database_ok=db_ok,
+        status=health_data["status"],
+        target_env=health_data["target_env"],
+        engine_state=health_data["engine_state"],
+        clock_drift_seconds=health_data["clock_drift_seconds"],
+        data_fresh=health_data["data_fresh"],
+        database_ok=health_data["database_ok"],
     )
 
 
 @router.get("/status", response_model=StatusResponse)
 async def get_status() -> StatusResponse:
-    """Read-only operational status."""
-    settings = get_settings()
-    cfg = load_engine_config(settings.CONFIG_FILE)
+    """Read-only operational status from live trading engine."""
+    engine = get_trading_engine()
+    status_data = engine.get_status()
     return StatusResponse(
-        engine_state=EngineState.RUNNING.value,
-        active_profile=cfg.get("profile", "default"),
-        symbol=cfg.get("symbol", settings.DEFAULT_SYMBOL),
-        current_regime="RANGING",
-        allocated_strategy="mean_reversion",
-        kill_switch_active=False,
+        engine_state=status_data["engine_state"],
+        active_profile=status_data["active_profile"],
+        symbol=status_data["symbol"],
+        current_regime=status_data["current_regime"],
+        allocated_strategy=status_data["allocated_strategy"],
+        kill_switch_active=status_data["kill_switch_active"],
     )
 
 
 @router.get("/positions")
 async def get_positions() -> dict[str, Any]:
     """Exchange-reconciled positions and working orders."""
-    return {
-        "positions": [],
-        "open_orders": [],
-        "source": "reconciled_exchange_truth",
-    }
+    engine = get_trading_engine()
+    return await engine.get_positions()
 
 
 @router.get("/strategies")
 async def get_strategies() -> dict[str, Any]:
     """Virtual shadow account performance metrics (clearly labelled hypothetical)."""
-    return {
-        "disclaimer": "All performance numbers here are HYPOTHETICAL from shadow accounts.",
-        "shadow_accounts": [
-            {
-                "strategy": "trend_following",
-                "trade_count": 0,
-                "win_rate": 0.0,
-                "net_profit": 0.0,
-                "max_drawdown_pct": 0.0,
-            },
-            {
-                "strategy": "mean_reversion",
-                "trade_count": 0,
-                "win_rate": 0.0,
-                "net_profit": 0.0,
-                "max_drawdown_pct": 0.0,
-            },
-        ],
-    }
+    engine = get_trading_engine()
+    return engine.get_strategies()
 
 
 @router.get("/decisions")
@@ -145,13 +144,17 @@ async def get_config() -> dict[str, Any]:
 @router.post("/control/pause")
 async def pause_trading(_secret: str = Depends(verify_control_secret)) -> dict[str, str]:
     """Pause new entries; existing brackets remain active."""
-    return {"status": "success", "engine_state": EngineState.PAUSED.value}
+    engine = get_trading_engine()
+    new_state = engine.pause()
+    return {"status": "success", "engine_state": new_state.value}
 
 
 @router.post("/control/resume")
 async def resume_trading(_secret: str = Depends(verify_control_secret)) -> dict[str, str]:
     """Resume regular trading operations."""
-    return {"status": "success", "engine_state": EngineState.RUNNING.value}
+    engine = get_trading_engine()
+    new_state = engine.resume()
+    return {"status": "success", "engine_state": new_state.value}
 
 
 @router.post("/control/kill")
@@ -160,6 +163,8 @@ async def trigger_kill_switch(
     _secret: str = Depends(verify_control_secret),
 ) -> dict[str, str]:
     """Emergency halt: cancel orders, close positions, transition to HALTED."""
+    engine = get_trading_engine()
+    await engine.kill(reason=request.reason)
     return {
         "status": "HALTED",
         "action": "Working orders cancelled, positions closing via reduce-only",
@@ -178,6 +183,13 @@ async def reset_from_halt(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Reset rejected. 'confirmation' must equal 'CONFIRM_RESET'",
         )
+    engine = get_trading_engine()
+    success = engine.reset_from_halt(request.confirmation)
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Reset rejected. Engine is not halted or verification failed.",
+        )
     return {"status": "success", "engine_state": EngineState.PAUSED.value}
 
 
@@ -187,9 +199,11 @@ async def inject_chaos(
     _secret: str = Depends(verify_control_secret),
 ) -> dict[str, str]:
     """Inject scripted demo chaos scenario (e.g. price_shock, stale_feed)."""
+    engine = get_trading_engine()
+    res = await engine.inject_chaos(scenario=request.scenario, intensity=request.intensity)
     return {
         "status": "injected",
         "scenario": request.scenario,
         "intensity": str(request.intensity),
-        "note": "Simulated chaos applied to decision harness only; no harmful traffic sent to exchange.",
+        "note": res.get("action", "Simulated chaos applied to decision harness"),
     }
