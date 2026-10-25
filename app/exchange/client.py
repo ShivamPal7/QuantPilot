@@ -5,7 +5,12 @@ Defined in Section 9.1 of agent.md.
 
 from __future__ import annotations
 
+import asyncio
+import json
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from decimal import Decimal
 from typing import Any, Protocol
 
@@ -75,18 +80,17 @@ class DeltaRESTClient:
         target_env: str = "testnet",
         rate_limiter: RateLimitAccountant | None = None,
     ) -> None:
-        if httpx is None:
-            raise ImportError("httpx is required to use DeltaRESTClient. Run 'pip install httpx'.")
         # Enforce startup testnet-only security guard
         assert_testnet_environment(target_env=target_env, rest_url=base_url)
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.api_secret = api_secret
         self.rate_limiter = rate_limiter or RateLimitAccountant()
-        self._http_client = httpx.AsyncClient(timeout=10.0)
+        self._http_client = httpx.AsyncClient(timeout=10.0) if httpx is not None else None
 
     async def close(self) -> None:
-        await self._http_client.aclose()
+        if self._http_client is not None:
+            await self._http_client.aclose()
 
     async def _request(
         self,
@@ -104,12 +108,21 @@ class DeltaRESTClient:
 
         self.rate_limiter.record_usage(weight)
         url = f"{self.base_url}{path}"
-        query_string = httpx.QueryParams(params or {}).raw.decode("utf-8") if params else ""
-        body_str = httpx._content.encode_json(payload)[1].decode("utf-8") if payload else ""
 
-        headers = {}
+        if params:
+            query_string = urllib.parse.urlencode(params)
+            full_url = f"{url}?{query_string}"
+        else:
+            query_string = ""
+            full_url = url
+
+        body_str = json.dumps(payload) if payload else ""
+        headers = {
+            "Content-Type": "application/json",
+            "User-Agent": "QuantPilot-GlassBoxDesk/1.0",
+        }
         if auth_required:
-            headers = build_auth_headers(
+            auth_hdrs = build_auth_headers(
                 api_key=self.api_key,
                 api_secret=self.api_secret,
                 method=method,
@@ -117,30 +130,60 @@ class DeltaRESTClient:
                 query_string=query_string,
                 body=body_str,
             )
+            headers.update(auth_hdrs)
 
-        response = await self._http_client.request(
-            method=method,
-            url=url,
-            params=params,
-            json=payload,
-            headers=headers,
-        )
+        if self._http_client is not None:
+            response = await self._http_client.request(
+                method=method,
+                url=url,
+                params=params,
+                json=payload,
+                headers=headers,
+            )
+            status_code = response.status_code
+            resp_headers = dict(response.headers)
+            resp_text = response.text
+            try:
+                data = response.json()
+            except Exception:
+                data = None
+        else:
+            def _send_urllib() -> tuple[int, dict[str, str], str]:
+                body_bytes = body_str.encode("utf-8") if body_str else None
+                req = urllib.request.Request(full_url, data=body_bytes, headers=headers, method=method)
+                try:
+                    with urllib.request.urlopen(req, timeout=10.0) as resp:
+                        s_code = resp.status
+                        h_dict = {k.lower(): v for k, v in resp.headers.items()}
+                        t_body = resp.read().decode("utf-8")
+                        return s_code, h_dict, t_body
+                except urllib.error.HTTPError as h_err:
+                    s_code = h_err.code
+                    h_dict = {k.lower(): v for k, v in h_err.headers.items()}
+                    t_body = h_err.read().decode("utf-8")
+                    return s_code, h_dict, t_body
+                except Exception as exc:
+                    raise ExchangeError(f"HTTP request failed: {exc}")
 
-        if response.status_code == 429:
-            retry_ms = int(response.headers.get("retry-after", "1")) * 1000
+            status_code, resp_headers, resp_text = await asyncio.to_thread(_send_urllib)
+            try:
+                data = json.loads(resp_text)
+            except Exception:
+                data = None
+
+        if status_code == 429:
+            retry_ms = int(resp_headers.get("retry-after", "1")) * 1000
             raise RateLimitExceededError(retry_after_ms=retry_ms)
-        elif response.status_code == 401:
+        elif status_code == 401:
             raise InvalidKeyError("Unauthorized (401) on Delta Exchange REST")
-        elif response.status_code == 403:
+        elif status_code == 403:
             raise IPNotWhitelistedError("Forbidden (403): Verify IP whitelist and User-Agent")
 
-        try:
-            data = response.json()
-        except Exception:
-            raise ExchangeError(f"HTTP {response.status_code}: Non-JSON response")
+        if data is None:
+            raise ExchangeError(f"HTTP {status_code}: Non-JSON response ({resp_text})")
 
-        if not response.is_success or (isinstance(data, dict) and data.get("success") is False):
-            err_msg = data.get("error", {}).get("message", response.text) if isinstance(data, dict) else response.text
+        if status_code >= 400 or (isinstance(data, dict) and data.get("success") is False):
+            err_msg = data.get("error", {}).get("message", resp_text) if isinstance(data, dict) else resp_text
             raise ExchangeError(f"Exchange error: {err_msg}")
 
         return data
@@ -273,28 +316,74 @@ class DeltaRESTClient:
     async def get_candles(
         self, symbol: str, resolution: str, start_time_s: int, end_time_s: int
     ) -> list[Candle]:
+        resolution_map = {
+            "1m": "1",
+            "3m": "3",
+            "5m": "5",
+            "15m": "15",
+            "30m": "30",
+            "1h": "60",
+            "2h": "120",
+            "4h": "240",
+            "6h": "360",
+            "1d": "D",
+            "1w": "1W",
+        }
+        res_str = resolution_map.get(resolution.lower(), resolution)
         params = {
             "symbol": symbol,
-            "resolution": resolution,
+            "resolution": res_str,
+            "from": start_time_s,
+            "to": end_time_s,
             "start": start_time_s,
             "end": end_time_s,
         }
         res = await self._request("GET", "/v2/chart/history", params=params, weight=WEIGHT_PUBLIC_READ)
         candles = []
-        for item in res.get("result", []):
-            candles.append(
-                Candle(
-                    symbol=symbol,
-                    timeframe=resolution,
-                    open_time=parse_exchange_timestamp(item.get("time")),
-                    close_time=parse_exchange_timestamp(item.get("time")),
-                    open=to_decimal(item.get("open")),
-                    high=to_decimal(item.get("high")),
-                    low=to_decimal(item.get("low")),
-                    close=to_decimal(item.get("close")),
-                    volume=to_decimal(item.get("volume")),
-                    is_closed=True,
-                    source="delta_rest",
+        raw = res.get("result", {})
+        if isinstance(raw, dict) and "t" in raw:
+            times = raw.get("t", [])
+            opens = raw.get("o", [])
+            highs = raw.get("h", [])
+            lows = raw.get("l", [])
+            closes = raw.get("c", [])
+            volumes = raw.get("v", [])
+            for i in range(len(times)):
+                t_val = times[i]
+                open_dt = parse_exchange_timestamp(t_val)
+                candles.append(
+                    Candle(
+                        symbol=symbol,
+                        timeframe=resolution,
+                        open_time=open_dt,
+                        close_time=open_dt,
+                        open=to_decimal(opens[i]),
+                        high=to_decimal(highs[i]),
+                        low=to_decimal(lows[i]),
+                        close=to_decimal(closes[i]),
+                        volume=to_decimal(volumes[i]) if i < len(volumes) else Decimal("0"),
+                        is_closed=True,
+                        source="delta_rest",
+                    )
                 )
-            )
+        elif isinstance(raw, list):
+            for item in raw:
+                if isinstance(item, dict):
+                    t_val = item.get("time") or item.get("t")
+                    open_dt = parse_exchange_timestamp(t_val)
+                    candles.append(
+                        Candle(
+                            symbol=symbol,
+                            timeframe=resolution,
+                            open_time=open_dt,
+                            close_time=open_dt,
+                            open=to_decimal(item.get("open") or item.get("o")),
+                            high=to_decimal(item.get("high") or item.get("h")),
+                            low=to_decimal(item.get("low") or item.get("l")),
+                            close=to_decimal(item.get("close") or item.get("c")),
+                            volume=to_decimal(item.get("volume") or item.get("v", "0")),
+                            is_closed=True,
+                            source="delta_rest",
+                        )
+                    )
         return candles

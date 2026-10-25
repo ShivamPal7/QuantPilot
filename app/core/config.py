@@ -12,6 +12,28 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+
+def _load_env_file(env_file_path: Path = Path(".env")) -> None:
+    """Load key-value pairs from .env into os.environ if present."""
+    if not env_file_path.is_file():
+        return
+    try:
+        with open(env_file_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, val = line.split("=", 1)
+                key = key.strip()
+                val = val.strip().strip("'\"")
+                if key and key not in os.environ:
+                    os.environ[key] = val
+    except Exception:
+        pass
+
+
+_load_env_file()
+
 # Optional import of pydantic-settings if installed
 try:
     from pydantic import Field
