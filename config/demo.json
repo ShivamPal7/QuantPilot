@@ -1,0 +1,68 @@
+{
+  "profile": "demo",
+  "symbol": "BTCUSD",
+  "timeframe": "1m",
+  "warmup": {
+    "enabled": true,
+    "candle_count": 60
+  },
+  "strategies": {
+    "trend": {
+      "fast_period": 5,
+      "slow_period": 15,
+      "atr_period": 10,
+      "atr_multiplier": 1.5,
+      "min_history": 20
+    },
+    "reversion": {
+      "lookback_period": 15,
+      "z_score_threshold": 1.8,
+      "atr_period": 10,
+      "atr_multiplier": 1.2,
+      "min_history": 20
+    }
+  },
+  "regime": {
+    "adx_period": 10,
+    "trend_threshold": 20.0,
+    "volatility_lookback": 15,
+    "hysteresis_candles": 2
+  },
+  "shadow": {
+    "initial_capital": 10000.0,
+    "taker_fee_pct": 0.0005,
+    "maker_fee_pct": 0.0002,
+    "default_slippage_bps": 15.0,
+    "calibration_min_fills": 3
+  },
+  "allocator": {
+    "exploration_floor": 0.20,
+    "recency_window_trades": 10,
+    "min_trades_for_prior": 3
+  },
+  "risk": {
+    "risk_fraction_per_trade": 0.005,
+    "max_daily_loss_pct": 0.02,
+    "max_drawdown_halt_pct": 0.04,
+    "max_concurrent_positions": 1,
+    "max_leverage": 2,
+    "max_spread_bps": 25.0,
+    "max_consecutive_losses": 3,
+    "consecutive_loss_cooldown_candles": 3
+  },
+  "execution": {
+    "order_type": "marketable_limit",
+    "ioc_touch_offset_bps": 8.0,
+    "abandonment_timeout_seconds": 5.0,
+    "reconciliation_interval_seconds": 15.0,
+    "dead_man_timeout_seconds": 30.0
+  },
+  "market_data": {
+    "max_staleness_seconds": 8.0
+  },
+  "rate_limit": {
+    "budget_utilization_target": 0.25,
+    "max_window_weight": 20000,
+    "window_seconds": 300
+  }
+}
