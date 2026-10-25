@@ -22,6 +22,8 @@ try:
         current_regime: str
         allocated_strategy: str | None
         kill_switch_active: bool
+        equity: float | None = None
+        drawdown_pct: float | None = None
 
     class KillRequest(BaseModel):
         reason: str = Field(default="Manual operator kill switch trigger")
@@ -53,6 +55,8 @@ except ImportError:
         current_regime: str
         allocated_strategy: str | None
         kill_switch_active: bool
+        equity: float | None = None
+        drawdown_pct: float | None = None
 
     @dataclass
     class KillRequest:  # type: ignore[no-redef]

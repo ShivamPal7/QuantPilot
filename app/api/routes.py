@@ -79,14 +79,36 @@ async def get_status() -> StatusResponse:
         current_regime=status_data["current_regime"],
         allocated_strategy=status_data["allocated_strategy"],
         kill_switch_active=status_data["kill_switch_active"],
+        equity=status_data.get("equity"),
+        drawdown_pct=status_data.get("drawdown_pct"),
     )
 
 
 @router.get("/positions")
 async def get_positions() -> dict[str, Any]:
-    """Exchange-reconciled positions and working orders."""
+    """Exchange-reconciled positions, working orders, and recent fills."""
     engine = get_trading_engine()
-    return await engine.get_positions()
+    pos_data = await engine.get_positions()
+
+    settings = get_settings()
+    fills: list[dict[str, Any]] = []
+    orders: list[dict[str, Any]] = []
+    try:
+        conn = sqlite3.connect(settings.DATABASE_PATH)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM fills ORDER BY filled_at DESC LIMIT 10;")
+        fills = [dict(r) for r in cursor.fetchall()]
+        cursor.execute("SELECT * FROM orders WHERE state = 'OPEN' ORDER BY created_at DESC LIMIT 10;")
+        orders = [dict(r) for r in cursor.fetchall()]
+        conn.close()
+    except Exception:
+        pass
+
+    pos_data["fills"] = fills
+    if not pos_data.get("open_orders"):
+        pos_data["open_orders"] = orders
+    return pos_data
 
 
 @router.get("/strategies")
@@ -207,3 +229,30 @@ async def inject_chaos(
         "intensity": str(request.intensity),
         "note": res.get("action", "Simulated chaos applied to decision harness"),
     }
+
+
+@router.post("/control/flatten")
+async def flatten_positions(
+    _secret: str = Depends(verify_control_secret),
+) -> dict[str, Any]:
+    """Manual emergency flatten: cancel all orders and close positions."""
+    engine = get_trading_engine()
+    return await engine.flatten()
+
+
+@router.post("/control/step")
+async def step_candle(
+    close_price: float | None = Query(None),
+) -> dict[str, Any]:
+    """Trigger or simulate immediate closed-candle evaluation on the engine."""
+    engine = get_trading_engine()
+    rec = await engine.step_candle(close_price=close_price)
+    return {
+        "status": "success",
+        "decision_id": rec.decision_id,
+        "narrative": rec.narrative,
+        "action": rec.risk_verdict.action.value,
+        "symbol": rec.symbol,
+        "timeframe": rec.timeframe,
+    }
+

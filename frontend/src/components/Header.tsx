@@ -17,6 +17,7 @@ import {
 
 export function Header() {
   const {
+    apiConnected,
     engineState,
     setEngineState,
     activeProfile,
@@ -76,6 +77,18 @@ export function Header() {
             />
             <span className="text-xs font-mono font-semibold tracking-wider text-zinc-200">
               {engineState}
+            </span>
+          </div>
+
+          {/* API Connection Indicator */}
+          <div className="hidden md:flex items-center space-x-1.5 px-2 py-1 rounded-md bg-zinc-900/80 border border-border text-[10px] font-mono">
+            <span
+              className={`h-1.5 w-1.5 rounded-full ${
+                apiConnected ? "bg-emerald-400 animate-pulse" : "bg-amber-400"
+              }`}
+            />
+            <span className={apiConnected ? "text-emerald-400" : "text-amber-400"}>
+              {apiConnected ? "API LIVE" : "DISCONNECTED"}
             </span>
           </div>
 

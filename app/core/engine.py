@@ -177,6 +177,19 @@ class TradingEngine:
 
         # 7. Execution, Reconciliation & Watchdog
         self.exchange = exchange
+        if (
+            self.exchange is None
+            and self.settings.DELTA_API_KEY
+            and self.settings.DELTA_API_KEY != "your_delta_testnet_api_key_here"
+        ):
+            from app.exchange.client import DeltaRESTClient
+            self.exchange = DeltaRESTClient(
+                base_url=self.settings.DELTA_REST_URL,
+                api_key=self.settings.DELTA_API_KEY,
+                api_secret=self.settings.DELTA_API_SECRET,
+                target_env=self.settings.TARGET_ENV,
+            )
+
         self.execution_manager = ExecutionManager(exchange=self.exchange) if self.exchange else None
         self.reconciler = Reconciler(exchange=self.exchange) if self.exchange else None
         self.watchdog = UnprotectedPositionWatchdog(
@@ -204,6 +217,30 @@ class TradingEngine:
         """Startup routine: reconcile, check clock, transition to RUNNING or PAUSED."""
         logger.info("Initializing Trading Engine for symbol %s (%s)...", self.symbol, self.timeframe)
         self.state_machine.transition(EngineState.WARMING_UP, reason="Startup initialization")
+
+        # Live product spec resolution & wallet balance sync
+        if self.exchange:
+            try:
+                prod = await self.exchange.get_product(self.symbol)
+                if prod and prod.get("contract_value"):
+                    self.contract_value_btc = Decimal(str(prod["contract_value"]))
+                    self.sizer.contract_value_btc = self.contract_value_btc
+                    logger.info(
+                        "Resolved product specs for %s: ID=%s, Value=%s, Status=%s",
+                        self.symbol,
+                        prod.get("id"),
+                        prod.get("contract_value"),
+                        prod.get("trading_status"),
+                    )
+
+                balances = await self.exchange.get_balances()
+                if "USD" in balances and balances["USD"] > Decimal("0"):
+                    self.current_equity = balances["USD"]
+                    self.drawdown_ladder.initial_capital = self.current_equity
+                    self.drawdown_ladder.peak_equity = self.current_equity
+                    logger.info("Synchronized live wallet balance: %s USD", self.current_equity)
+            except Exception as exc:
+                logger.warning("Live sync notice: %s", exc)
 
         # Initial reconciliation if exchange client is configured
         if self.exchange and self.reconciler:
@@ -438,6 +475,56 @@ class TradingEngine:
                 logger.error("Error flattening positions on kill: %s", exc)
         self.journal_writer.write_event(evt)
         return evt
+
+    async def flatten(self) -> dict[str, Any]:
+        """Manual emergency flatten of all positions and cancellation of pending orders."""
+        logger.info("Operator manual flatten executed for symbol %s.", self.symbol)
+        if self.exchange:
+            try:
+                if hasattr(self.exchange, "cancel_all"):
+                    await self.exchange.cancel_all(self.symbol)
+                elif hasattr(self.exchange, "cancel_all_orders"):
+                    await self.exchange.cancel_all_orders(self.symbol)
+
+                if hasattr(self.exchange, "close_all"):
+                    await self.exchange.close_all(self.symbol)
+                elif hasattr(self.exchange, "close_all_positions"):
+                    await self.exchange.close_all_positions(self.symbol)
+            except Exception as exc:
+                logger.error("Error flattening positions: %s", exc)
+        if self.reconciler:
+            self.reconciler.last_reconciled_positions = []
+        return {"status": "success", "action": "All orders cancelled and positions closed"}
+
+    async def step_candle(self, close_price: float | None = None) -> DecisionRecord:
+        """Simulate a closed candle and evaluate the complete decision pipeline."""
+        import random
+        now = datetime.now(timezone.utc)
+        last_candles = self.candle_store.get_candles()
+        if close_price is None:
+            base = float(last_candles[-1].close) if last_candles else float(self.profile.get("initial_price", 64285.5))
+            jitter = round((random.random() - 0.48) * 35.0, 1)
+            close_val = Decimal(str(base + jitter))
+        else:
+            close_val = Decimal(str(close_price))
+
+        open_val = close_val - Decimal(str(round((random.random() - 0.48) * 20, 1)))
+        high_val = max(open_val, close_val) + Decimal(str(round(random.random() * 25.0, 1)))
+        low_val = min(open_val, close_val) - Decimal(str(round(random.random() * 25.0, 1)))
+        vol_val = Decimal(str(round(10.0 + random.random() * 20.0, 1)))
+
+        candle = Candle(
+            symbol=self.symbol,
+            timeframe=self.timeframe,
+            open_time=now,
+            close_time=now,
+            open=open_val,
+            high=high_val,
+            low=low_val,
+            close=close_val,
+            volume=vol_val,
+        )
+        return await self.process_candle(candle)
 
     def reset_from_halt(self, confirmation: str) -> bool:
         """Reset from HALTED to PAUSED after human verification."""

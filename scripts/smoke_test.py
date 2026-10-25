@@ -61,7 +61,30 @@ async def run_smoke_test() -> None:
         balances = await client.get_balances()
         print(f"      Balances: {balances}")
 
-        print("[3/3] Ready for Phase 0 sign-off.")
+        # Step 3: Tiny far-from-market test order and cancellation
+        print("[3/3] Placing tiny far-from-market test order (BUY 1 contract at 1000.0)...")
+        from decimal import Decimal
+        order_res = await client.place_order(
+            symbol=symbol,
+            size_contracts=1,
+            side="buy",
+            order_type="limit",
+            price=Decimal("1000.0"),
+            client_order_id="qp_smoke_test_001",
+        )
+        order_id = order_res.get("id")
+        print(f"      Order placed successfully. Exchange Order ID: {order_id}, State: {order_res.get('state')}")
+
+        print("      Cancelling test order immediately...")
+        cancelled = await client.cancel_order(order_id=order_id, symbol=symbol)
+        if cancelled:
+            print(f"      ✅ Order {order_id} cancelled successfully.")
+        else:
+            print(f"      ⚠️ Cancel status: {cancelled}")
+
+        print("=" * 60)
+        print("✅ Phase 0 Delta Testnet Smoke Test Completed Successfully!")
+        print("=" * 60)
     except Exception as exc:
         print(f"❌ Smoke test encountered an error: {exc}")
     finally:

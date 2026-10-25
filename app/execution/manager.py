@@ -64,7 +64,7 @@ class ExecutionManager:
                 direction=intent.direction,
                 stop_distance=intent.proposed_stop_distance,
                 tp_distance=intent.proposed_tp_distance,
-                tick_size=Decimal("0.5"),
+                tick_size=Decimal("0.1"),
             )
             bracket_sl = brackets.stop_loss_price
             bracket_tp = brackets.take_profit_price
